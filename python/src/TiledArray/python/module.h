@@ -58,7 +58,11 @@ static World &initialize() {
   char *_argv[0];
   char **argv = _argv;
   if (!madness::initialized()) {
-    madness::initialize(argc, argv, ta_comm);
+    // initialize nthread with -1, so that it will take MAD_NUM_THREADS env varaible
+    // otherwise, on some machine, the nthread will be initialized with a large integer
+    // and results in assertion.
+    madness::initialize(argc, argv,  -1);
+    //madness::initialize(argc, argv, ta_comm, -1);
     initialized_madness = true;
   }
   TiledArray::World &world = TiledArray::initialize(argc, argv, ta_comm);

@@ -60,7 +60,7 @@ BOOST_AUTO_TEST_CASE(constructor) {
     BOOST_CHECK_EQUAL(r.tiles_range().second, 0ul);
     BOOST_CHECK_EQUAL(r.elements_range().first, 0ul);
     BOOST_CHECK_EQUAL(r.elements_range().second, 0ul);
-    BOOST_CHECK_THROW(r.tile(0), Exception);
+    BOOST_CHECK_TA_ASSERT(r.tile(0), Exception);
   }
 
   // check construction with a iterators and the range info.
@@ -120,8 +120,8 @@ BOOST_AUTO_TEST_CASE(constructor) {
     BOOST_CHECK_EQUAL(r.elements_range().second, 28);
   }
 #else   // TA_SIGNED_1INDEX_TYPE
-  BOOST_CHECK_THROW(TiledRange1 r({-1, 0, 2, 5, 10, 17, 28}),
-                    TiledArray::Exception);
+  BOOST_CHECK_TA_ASSERT(TiledRange1 r({-1, 0, 2, 5, 10, 17, 28}),
+                        TiledArray::Exception);
 #endif  // TA_SIGNED_1INDEX_TYPE
 
   // check copy constructor
@@ -152,18 +152,44 @@ BOOST_AUTO_TEST_CASE(constructor) {
     }
   }
 
+  // corner cases
+  {
+    // range with 1 empty tile
+    {
+      TiledRange1 r{0, 0};
+      BOOST_CHECK_EQUAL(r.tiles_range().first, 0);
+      BOOST_CHECK_EQUAL(r.tiles_range().second, 1);
+      BOOST_CHECK_EQUAL(r.elements_range().first, 0);
+      BOOST_CHECK_EQUAL(r.elements_range().second, 0);
+      BOOST_CHECK(r.tile(0) == Range1(0, 0));
+    }
+    // range with some empty tiles
+    {
+      TiledRange1 r{1, 3, 3, 5, 5};
+      BOOST_CHECK_EQUAL(r.tiles_range().first, 0);
+      BOOST_CHECK_EQUAL(r.tiles_range().second, 4);
+      BOOST_CHECK_EQUAL(r.elements_range().first, 1);
+      BOOST_CHECK_EQUAL(r.elements_range().second, 5);
+      // test tiles
+      BOOST_CHECK(r.tile(0) == Range1(1, 3));
+      BOOST_CHECK(r.tile(1) == Range1(3, 3));
+      BOOST_CHECK(r.tile(2) == Range1(3, 5));
+      BOOST_CHECK(r.tile(3) == Range1(5, 5));
+    }
+  }
+
   // Check that invalid input throws an exception.
 #ifndef NDEBUG
   {
     std::vector<std::size_t> boundaries;
-    BOOST_CHECK_THROW(TiledRange1 r(boundaries.begin(), boundaries.end()),
-                      Exception);
-    BOOST_CHECK_THROW(TiledRange1 r(a.begin(), a.begin()), Exception);
-    BOOST_CHECK_THROW(TiledRange1 r(a.begin(), a.begin() + 1), Exception);
+    BOOST_CHECK_TA_ASSERT(TiledRange1 r(boundaries.begin(), boundaries.end()),
+                          Exception);
+    BOOST_CHECK_TA_ASSERT(TiledRange1 r(a.begin(), a.begin()), Exception);
+    BOOST_CHECK_TA_ASSERT(TiledRange1 r(a.begin(), a.begin() + 1), Exception);
     boundaries.push_back(2);
     boundaries.push_back(0);
-    BOOST_CHECK_THROW(TiledRange1 r(boundaries.begin(), boundaries.end()),
-                      Exception);
+    BOOST_CHECK_TA_ASSERT(TiledRange1 r(boundaries.begin(), boundaries.end()),
+                          Exception);
   }
 #endif
 }
@@ -195,6 +221,20 @@ BOOST_AUTO_TEST_CASE(element_to_tile) {
 
   // Check that the expected and internal element to tile maps match.
   BOOST_CHECK_EQUAL_COLLECTIONS(c.begin(), c.end(), e.begin(), e.end());
+
+  // corner case: empty tiles
+  {
+    // range with some empty tiles
+    {
+      TiledRange1 r{1, 3, 3, 5, 5};
+      BOOST_CHECK_TA_ASSERT(r.element_to_tile(0), Exception);
+      BOOST_CHECK_EQUAL(r.element_to_tile(1), 0);
+      BOOST_CHECK_EQUAL(r.element_to_tile(2), 0);
+      BOOST_CHECK_EQUAL(r.element_to_tile(3), 2);
+      BOOST_CHECK_EQUAL(r.element_to_tile(4), 2);
+      BOOST_CHECK_TA_ASSERT(r.element_to_tile(5), Exception);
+    }
+  }
 }
 
 BOOST_AUTO_TEST_CASE(comparison) {

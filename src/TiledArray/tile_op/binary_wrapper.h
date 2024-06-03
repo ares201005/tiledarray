@@ -129,9 +129,11 @@ class BinaryWrapper {
   BinaryWrapper<Op>& operator=(const BinaryWrapper<Op>&) = default;
   BinaryWrapper<Op>& operator=(BinaryWrapper<Op>&&) = default;
 
-  template <typename Perm, typename = std::enable_if_t<
-                               TiledArray::detail::is_permutation_v<Perm>>>
-  BinaryWrapper(const Op& op, const Perm& perm) : op_(op), perm_(perm) {}
+  template <typename Perm,
+            typename = std::enable_if_t<TiledArray::detail::is_permutation_v<
+                std::remove_reference_t<Perm>>>>
+  BinaryWrapper(const Op& op, Perm&& perm)
+      : op_(op), perm_(std::forward<Perm>(perm)) {}
 
   BinaryWrapper(const Op& op) : op_(op), perm_() {}
 
@@ -294,10 +296,10 @@ class BinaryWrapper {
 
     if (perm_) return meta::invoke(op_, eval_left, eval_right, perm_);
 
-    auto op_left = [=](eval_t<L>& _left, eval_t<R>& _right) {
+    auto op_left = [this](eval_t<L>& _left, eval_t<R>& _right) {
       return op_.consume_left(_left, _right);
     };
-    auto op_right = [=](eval_t<L>& _left, eval_t<R>& _right) {
+    auto op_right = [this](eval_t<L>& _left, eval_t<R>& _right) {
       return op_.consume_right(_left, _right);
     };
     // Override consumable

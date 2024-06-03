@@ -147,9 +147,10 @@ class BlkTsrEngineBase : public LeafEngine<Derived> {
 
  protected:
   // Import base class variables to this scope
+  using ExprEngine_::implicit_permute_inner_;
+  using ExprEngine_::implicit_permute_outer_;
   using ExprEngine_::indices_;
   using ExprEngine_::perm_;
-  using ExprEngine_::permute_tiles_;
   using ExprEngine_::pmap_;
   using ExprEngine_::shape_;
   using ExprEngine_::trange_;
@@ -194,16 +195,19 @@ class BlkTsrEngineBase : public LeafEngine<Derived> {
       const auto lower_d = lower[d];
       const auto upper_d = upper[d];
 
-      // Copy and shift the tiling for the block
-      auto i = lower_d;
-      const auto base_d = trange[d].tile(i).first;
-      trange1_data.emplace_back(0ul);
-      for (; i < upper_d; ++i)
-        trange1_data.emplace_back(trange[d].tile(i).second - base_d);
-
-      // Add the trange1 to the tiled range data
-      trange_data.emplace_back(trange1_data.begin(), trange1_data.end());
-      trange1_data.resize(0ul);
+      // Copy and shift the tiling for the block, if nonempty
+      if (lower_d != upper_d) {
+        auto i = lower_d;
+        const auto base_d = trange[d].tile(i).first;
+        trange1_data.emplace_back(0ul);
+        for (; i < upper_d; ++i)
+          trange1_data.emplace_back(trange[d].tile(i).second - base_d);
+        // Add the trange1 to the tiled range data
+        trange_data.emplace_back(trange1_data.begin(), trange1_data.end());
+        trange1_data.resize(0ul);
+      } else {
+        trange_data.emplace_back();
+      }
     }
 
     return TiledRange(trange_data.begin(), trange_data.end());
@@ -233,16 +237,19 @@ class BlkTsrEngineBase : public LeafEngine<Derived> {
       const auto lower_i = lower[inv_perm_d];
       const auto upper_i = upper[inv_perm_d];
 
-      // Copy, shift, and permute the tiling of the block
-      auto i = lower_i;
-      const auto base_d = trange[inv_perm_d].tile(i).first;
-      trange1_data.emplace_back(0ul);
-      for (; i < upper_i; ++i)
-        trange1_data.emplace_back(trange[inv_perm_d].tile(i).second - base_d);
+      if (lower_i != upper_i) {
+        // Copy, shift, and permute the tiling of the block
+        auto i = lower_i;
+        const auto base_d = trange[inv_perm_d].tile(i).first;
+        trange1_data.emplace_back(0ul);
+        for (; i < upper_i; ++i)
+          trange1_data.emplace_back(trange[inv_perm_d].tile(i).second - base_d);
 
-      // Add the trange1 to the tiled range data
-      trange_data.emplace_back(trange1_data.begin(), trange1_data.end());
-      trange1_data.resize(0ul);
+        // Add the trange1 to the tiled range data
+        trange_data.emplace_back(trange1_data.begin(), trange1_data.end());
+        trange1_data.resize(0ul);
+      } else
+        trange_data.emplace_back();
     }
 
     return TiledRange(trange_data.begin(), trange_data.end());
@@ -335,9 +342,10 @@ class BlkTsrEngine
   // Import base class variables to this scope
   using BlkTsrEngineBase_::lower_bound_;
   using BlkTsrEngineBase_::upper_bound_;
+  using ExprEngine_::implicit_permute_inner_;
+  using ExprEngine_::implicit_permute_outer_;
   using ExprEngine_::indices_;
   using ExprEngine_::perm_;
-  using ExprEngine_::permute_tiles_;
   using ExprEngine_::pmap_;
   using ExprEngine_::shape_;
   using ExprEngine_::trange_;
@@ -376,12 +384,18 @@ class BlkTsrEngine
     // Get temporary data pointers
     const auto* MADNESS_RESTRICT const trange = array_.trange().data().data();
     const auto* MADNESS_RESTRICT const lower = lower_bound_.data();
+    const auto* MADNESS_RESTRICT const upper = upper_bound_.data();
 
     // Initialize the range shift vector
     for (unsigned int d = 0u; d < rank; ++d) {
       const auto lower_d = lower[d];
-      const auto base_d = trange[d].tile(lower_d).first;
-      range_shift.emplace_back(-base_d);
+      const auto upper_d = upper[d];
+      if (lower_d != upper_d) {
+        const auto base_d = trange[d].tile(lower_d).first;
+        range_shift.emplace_back(-base_d);
+      } else {
+        range_shift.emplace_back(0l);
+      }
     }
 
     return op_type(op_base_type(range_shift));
@@ -391,9 +405,10 @@ class BlkTsrEngine
 
   /// \param perm The permutation to be applied to tiles
   /// \return The tile operation
-  template <typename Perm, typename = std::enable_if_t<
-                               TiledArray::detail::is_permutation_v<Perm>>>
-  op_type make_tile_op(const Perm& perm) const {
+  template <typename Perm,
+            typename = std::enable_if_t<TiledArray::detail::is_permutation_v<
+                std::remove_reference_t<Perm>>>>
+  op_type make_tile_op(Perm&& perm) const {
     const unsigned int rank = trange_.tiles_range().rank();
 
     // Construct and allocate memory for the shift range
@@ -402,6 +417,7 @@ class BlkTsrEngine
     // Get temporary data pointers
     const auto* MADNESS_RESTRICT const trange = array_.trange().data().data();
     const auto* MADNESS_RESTRICT const lower = lower_bound_.data();
+    const auto* MADNESS_RESTRICT const upper = upper_bound_.data();
 
     // Initialize the permuted range shift vector
     auto outer_perm = outer(perm);
@@ -409,11 +425,14 @@ class BlkTsrEngine
     for (unsigned int d = 0u; d < rank; ++d) {
       const auto perm_d = outer_perm[d];
       const auto lower_d = lower[d];
-      const auto base_d = trange[d].tile(lower_d).first;
-      range_shift[perm_d] = -base_d;
+      const auto upper_d = upper[d];
+      if (lower_d != upper_d) {
+        const auto base_d = trange[d].tile(lower_d).first;
+        range_shift[perm_d] = -base_d;
+      }
     }
 
-    return op_type(op_base_type(range_shift), perm);
+    return op_type(op_base_type(range_shift), std::forward<Perm>(perm));
   }
 
   /// Expression identification tag
@@ -478,9 +497,10 @@ class ScalBlkTsrEngine
   // Import base class variables to this scope
   using BlkTsrEngineBase_::lower_bound_;
   using BlkTsrEngineBase_::upper_bound_;
+  using ExprEngine_::implicit_permute_inner_;
+  using ExprEngine_::implicit_permute_outer_;
   using ExprEngine_::indices_;
   using ExprEngine_::perm_;
-  using ExprEngine_::permute_tiles_;
   using ExprEngine_::pmap_;
   using ExprEngine_::shape_;
   using ExprEngine_::trange_;
@@ -522,12 +542,17 @@ class ScalBlkTsrEngine
     // Get temporary data pointers
     const auto* MADNESS_RESTRICT const trange = array_.trange().data().data();
     const auto* MADNESS_RESTRICT const lower = lower_bound_.data();
+    const auto* MADNESS_RESTRICT const upper = upper_bound_.data();
 
     // Construct the inverse permutation
     for (unsigned int d = 0u; d < rank; ++d) {
       const auto lower_d = lower[d];
-      const auto base_d = trange[d].tile(lower_d).first;
-      range_shift.emplace_back(-base_d);
+      const auto upper_d = upper[d];
+      if (lower_d != upper_d) {
+        const auto base_d = trange[d].tile(lower_d).first;
+        range_shift.emplace_back(-base_d);
+      } else
+        range_shift.emplace_back(0);
     }
 
     return op_type(op_base_type(range_shift, factor_));
@@ -537,9 +562,10 @@ class ScalBlkTsrEngine
 
   /// \param perm The permutation to be applied to tiles
   /// \return The tile operation
-  template <typename Perm, typename = std::enable_if_t<
-                               TiledArray::detail::is_permutation_v<Perm>>>
-  op_type make_tile_op(const Perm& perm) const {
+  template <typename Perm,
+            typename = std::enable_if_t<TiledArray::detail::is_permutation_v<
+                std::remove_reference_t<Perm>>>>
+  op_type make_tile_op(Perm&& perm) const {
     const unsigned int rank = trange_.tiles_range().rank();
 
     // Construct and allocate memory for the shift range
@@ -548,6 +574,7 @@ class ScalBlkTsrEngine
     // Get temporary data pointers
     const auto* MADNESS_RESTRICT const trange = array_.trange().data().data();
     const auto* MADNESS_RESTRICT const lower = lower_bound_.data();
+    const auto* MADNESS_RESTRICT const upper = upper_bound_.data();
 
     // Initialize the permuted range shift vector
     auto outer_perm = outer(perm);
@@ -555,11 +582,15 @@ class ScalBlkTsrEngine
     for (unsigned int d = 0u; d < rank; ++d) {
       const auto perm_d = outer_perm[d];
       const auto lower_d = lower[d];
-      const auto base_d = trange[d].tile(lower_d).first;
-      range_shift[perm_d] = -base_d;
+      const auto upper_d = upper[d];
+      if (lower_d != upper_d) {
+        const auto base_d = trange[d].tile(lower_d).first;
+        range_shift[perm_d] = -base_d;
+      }
     }
 
-    return op_type(op_base_type(range_shift, factor_), perm);
+    return op_type(op_base_type(range_shift, factor_),
+                   std::forward<Perm>(perm));
   }
 
   /// Expression identification tag

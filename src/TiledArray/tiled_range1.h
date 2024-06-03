@@ -27,8 +27,10 @@
 #include <TiledArray/type_traits.h>
 #include <TiledArray/utility.h>
 #include <madness/world/archive.h>
+
 #include <cassert>
 #include <initializer_list>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -36,9 +38,11 @@ namespace TiledArray {
 
 /// TiledRange1 class defines a non-uniformly-tiled, contiguous, one-dimensional
 /// range. The tiling data is constructed with and stored in an array with
-/// the format {a0, a1, a2, ...}, where 0 <= a0 < a1 < a2 < ... Each tile is
+/// the format {a0, a1, a2, ...}, where a0 <= a1 <= a2 <= ... Each tile is
 /// defined as [a0,a1), [a1,a2), ... The number of tiles in the range will be
 /// equal to one less than the number of elements in the array.
+/// \note if TiledArray was configured with `TA_SIGNED_1INDEX_TYPE=OFF` then the
+/// tile boundaries must be non-negative.
 class TiledRange1 {
  private:
   struct Enabler {};
@@ -56,8 +60,7 @@ class TiledRange1 {
   ///   assert(tr.elements_range() == (TiledRange1::range_type{0,0}));
   ///   assert(tr.begin() == tr.end());
   /// \endcode
-  TiledRange1()
-      : range_(0, 0), elements_range_(0, 0), tiles_ranges_(), elem2tile_() {}
+  TiledRange1() : range_(0, 0), elements_range_(0, 0) {}
 
   /// Constructs a range with the tile boundaries ("hashmarks") provided by
   /// the range [ \p first , \p last ).
@@ -66,8 +69,7 @@ class TiledRange1 {
   template <typename RandIter,
             typename std::enable_if<
                 detail::is_random_iterator<RandIter>::value>::type* = nullptr>
-  explicit TiledRange1(RandIter first, RandIter last)
-      : range_(), elements_range_(), tiles_ranges_(), elem2tile_() {
+  explicit TiledRange1(RandIter first, RandIter last) {
     init_tiles_(first, last, 0);
   }
 
@@ -227,9 +229,10 @@ class TiledRange1 {
   ///       across ALL TiledRange1 instances.
   const index1_type& element_to_tile(const index1_type& i) const {
     TA_ASSERT(includes(elements_range_, i));
-    if (elem2tile_.empty()) {
+    if (!elem2tile_) {
       init_elem2tile_();
     }
+    // N.B. only track elements in this range
     return elem2tile_[i - elements_range_.first];
   }
 
@@ -290,14 +293,14 @@ class TiledRange1 {
             typename std::enable_if<madness::is_input_archive_v<
                 std::decay_t<Archive>>>::type* = nullptr>
   void serialize(Archive& ar) {
-    ar& range_& elements_range_& tiles_ranges_& elem2tile_;
+    ar & range_ & elements_range_ & tiles_ranges_;
   }
 
   template <typename Archive,
             typename std::enable_if<madness::is_output_archive_v<
                 std::decay_t<Archive>>>::type* = nullptr>
   void serialize(Archive& ar) const {
-    ar& range_& elements_range_& tiles_ranges_& elem2tile_;
+    ar & range_ & elements_range_ & tiles_ranges_;
   }
 
  private:
@@ -312,17 +315,17 @@ class TiledRange1 {
     TA_ASSERT((std::distance(first, last) >= 2) &&
               "TiledRange1 construction failed: You need at least 2 "
               "elements in the tile boundary list.");
-    // Verify the requirement that a0 < a1 < a2 < ...
+    // Verify the requirement that a0 <= a1 <= a2 <= ...
     for (; first != (last - 1); ++first) {
       TA_ASSERT(
-          *first < *(first + 1) &&
+          *first <= *(first + 1) &&
           "TiledRange1 construction failed: Invalid tile boundary, tile "
-          "boundary i must be greater than tile boundary i+1 for all i. ");
+          "boundary i must not be greater than tile boundary i+1 for all i. ");
       TA_ASSERT(
-          static_cast<index1_type>(*first) <
+          static_cast<index1_type>(*first) <=
               static_cast<index1_type>(*(first + 1)) &&
           "TiledRange1 construction failed: Invalid tile boundary, tile "
-          "boundary i must be greater than tile boundary i+1 for all i. ");
+          "boundary i must not be greater than tile boundary i+1 for all i. ");
     }
   }
 
@@ -345,19 +348,30 @@ class TiledRange1 {
   void init_elem2tile_() const {
     using TiledArray::extent;
     // check for 0 size range.
-    if (extent(elements_range_) == 0) return;
+    const auto n = extent(elements_range_);
+    if (n == 0) return;
 
     static std::mutex mtx;
     {
       std::lock_guard<std::mutex> lock(mtx);
-      if (elem2tile_.empty()) {
+      if (!elem2tile_) {
         // initialize elem2tile map
-        elem2tile_.resize(extent(elements_range_));
+        auto e2t =
+            // #if __cplusplus >= 202002L  ... still broken in Xcode 14
+            //             std::make_shared<index1_type[]>(n);
+            // #else
+            std::shared_ptr<index1_type[]>(
+                new index1_type[n], [](index1_type* ptr) { delete[] ptr; });
+        // #endif
         const auto end = extent(range_);
         for (index1_type t = 0; t < end; ++t)
-          for (index1_type e = tiles_ranges_[t].first;
-               e < tiles_ranges_[t].second; ++e)
-            elem2tile_[e - elements_range_.first] = t + range_.first;
+          for (auto e : tiles_ranges_[t]) {
+            // only track elements in this range
+            e2t[e - elements_range_.first] = t + range_.first;
+          }
+        auto e2t_const = std::const_pointer_cast<const index1_type[]>(e2t);
+        // commit the changes
+        std::swap(elem2tile_, e2t_const);
       }
     }
   }
@@ -369,7 +383,7 @@ class TiledRange1 {
   range_type elements_range_;  ///< the range of element indices
   std::vector<range_type>
       tiles_ranges_;  ///< ranges of each tile (NO GAPS between tiles)
-  mutable std::vector<index1_type>
+  mutable std::shared_ptr<const index1_type[]>
       elem2tile_;  ///< maps element index to tile index (memoized data).
 
 };  // class TiledRange1

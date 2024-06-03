@@ -516,10 +516,13 @@ class SparseShape {
 
   /// Sparsity of the shape
 
-  /// \return The fraction of tiles that are zero.
+  /// \return The fraction of tiles that are zero. Always returns 0 if
+  /// `this->data().size()` is zero.
   float sparsity() const {
     TA_ASSERT(!tile_norms_.empty());
-    return float(zero_tile_count_) / float(tile_norms_.size());
+    return tile_norms_.size() != 0
+               ? float(zero_tile_count_) / float(tile_norms_.size())
+               : 0.f;
   }
 
   // clang-format off
@@ -797,6 +800,13 @@ class SparseShape {
     return equal;
   }
 
+  /// Bitwise comparison
+  /// \param other a SparseShape object
+  /// \return true if this object and @c other object are bitwise NOT identical
+  inline bool operator!=(const SparseShape<T>& other) const {
+    return !(*this == other);
+  }
+
  private:
   /// Create a copy of a sub-block of the shape
 
@@ -830,7 +840,7 @@ class SparseShape {
 
       // Check that the input indices are in range
       TA_ASSERT(lower_d >= tile_norms_.range().lobound(d));
-      TA_ASSERT(lower_d < upper_d);
+      TA_ASSERT(lower_d <= upper_d);
       TA_ASSERT(upper_d <= tile_norms_.range().upbound(d));
 
       // Construct the size vector for rank i
@@ -864,7 +874,7 @@ class SparseShape {
 
       // Check that the input indices are in range
       TA_ASSERT(lower_d >= tile_norms_.range().lobound(d));
-      TA_ASSERT(lower_d < upper_d);
+      TA_ASSERT(lower_d <= upper_d);
       TA_ASSERT(upper_d <= tile_norms_.range().upbound(d));
 
       // Construct the size vector for rank i
@@ -1672,23 +1682,23 @@ class SparseShape {
             typename std::enable_if<madness::is_input_archive_v<
                 std::decay_t<Archive>>>::type* = nullptr>
   void serialize(Archive& ar) {
-    ar& tile_norms_;
+    ar & tile_norms_;
     const unsigned int dim = tile_norms_.range().rank();
     // allocate size_vectors_
     size_vectors_ = std::move(std::shared_ptr<vector_type>(
         new vector_type[dim], std::default_delete<vector_type[]>()));
-    for (unsigned d = 0; d != dim; ++d) ar& size_vectors_.get()[d];
-    ar& zero_tile_count_;
+    for (unsigned d = 0; d != dim; ++d) ar & size_vectors_.get()[d];
+    ar & zero_tile_count_;
   }
 
   template <typename Archive,
             typename std::enable_if<madness::is_output_archive_v<
                 std::decay_t<Archive>>>::type* = nullptr>
   void serialize(Archive& ar) const {
-    ar& tile_norms_;
+    ar & tile_norms_;
     const unsigned int dim = tile_norms_.range().rank();
-    for (unsigned d = 0; d != dim; ++d) ar& size_vectors_.get()[d];
-    ar& zero_tile_count_;
+    for (unsigned d = 0; d != dim; ++d) ar & size_vectors_.get()[d];
+    ar & zero_tile_count_;
   }
 
  private:

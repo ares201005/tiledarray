@@ -49,36 +49,36 @@ BOOST_AUTO_TEST_CASE(default_constructor) {
   BOOST_CHECK(!x.validate(tr.tiles_range()));
   BOOST_CHECK_EQUAL(x.init_threshold(), SparseShape<float>::threshold());
 
-  BOOST_CHECK_THROW(x.nnz(), Exception);
+  BOOST_CHECK_TA_ASSERT(x.nnz(), Exception);
 
-  BOOST_CHECK_THROW(x[0], Exception);
+  BOOST_CHECK_TA_ASSERT(x[0], Exception);
 
-  BOOST_CHECK_THROW(x.perm(perm), Exception);
+  BOOST_CHECK_TA_ASSERT(x.perm(perm), Exception);
 
-  BOOST_CHECK_THROW(x.scale(2.0), Exception);
-  BOOST_CHECK_THROW(x.scale(2.0, perm), Exception);
+  BOOST_CHECK_TA_ASSERT(x.scale(2.0), Exception);
+  BOOST_CHECK_TA_ASSERT(x.scale(2.0, perm), Exception);
 
-  BOOST_CHECK_THROW(x.add(y), Exception);
-  BOOST_CHECK_THROW(x.add(y, 2.0), Exception);
-  BOOST_CHECK_THROW(x.add(y, perm), Exception);
-  BOOST_CHECK_THROW(x.add(y, 2.0, perm), Exception);
-  BOOST_CHECK_THROW(x.add(2.0), Exception);
-  BOOST_CHECK_THROW(x.add(2.0, perm), Exception);
+  BOOST_CHECK_TA_ASSERT(x.add(y), Exception);
+  BOOST_CHECK_TA_ASSERT(x.add(y, 2.0), Exception);
+  BOOST_CHECK_TA_ASSERT(x.add(y, perm), Exception);
+  BOOST_CHECK_TA_ASSERT(x.add(y, 2.0, perm), Exception);
+  BOOST_CHECK_TA_ASSERT(x.add(2.0), Exception);
+  BOOST_CHECK_TA_ASSERT(x.add(2.0, perm), Exception);
 
-  BOOST_CHECK_THROW(x.subt(y), Exception);
-  BOOST_CHECK_THROW(x.subt(y, 2.0), Exception);
-  BOOST_CHECK_THROW(x.subt(y, perm), Exception);
-  BOOST_CHECK_THROW(x.subt(y, 2.0, perm), Exception);
-  BOOST_CHECK_THROW(x.subt(2.0), Exception);
-  BOOST_CHECK_THROW(x.subt(2.0, perm), Exception);
+  BOOST_CHECK_TA_ASSERT(x.subt(y), Exception);
+  BOOST_CHECK_TA_ASSERT(x.subt(y, 2.0), Exception);
+  BOOST_CHECK_TA_ASSERT(x.subt(y, perm), Exception);
+  BOOST_CHECK_TA_ASSERT(x.subt(y, 2.0, perm), Exception);
+  BOOST_CHECK_TA_ASSERT(x.subt(2.0), Exception);
+  BOOST_CHECK_TA_ASSERT(x.subt(2.0, perm), Exception);
 
-  BOOST_CHECK_THROW(x.mult(y), Exception);
-  BOOST_CHECK_THROW(x.mult(y, 2.0), Exception);
-  BOOST_CHECK_THROW(x.mult(y, perm), Exception);
-  BOOST_CHECK_THROW(x.mult(y, 2.0, perm), Exception);
+  BOOST_CHECK_TA_ASSERT(x.mult(y), Exception);
+  BOOST_CHECK_TA_ASSERT(x.mult(y, 2.0), Exception);
+  BOOST_CHECK_TA_ASSERT(x.mult(y, perm), Exception);
+  BOOST_CHECK_TA_ASSERT(x.mult(y, 2.0, perm), Exception);
 
-  BOOST_CHECK_THROW(x.gemm(y, 2.0, gemm_helper), Exception);
-  BOOST_CHECK_THROW(x.gemm(y, 2.0, gemm_helper, perm), Exception);
+  BOOST_CHECK_TA_ASSERT(x.gemm(y, 2.0, gemm_helper), Exception);
+  BOOST_CHECK_TA_ASSERT(x.gemm(y, 2.0, gemm_helper, perm), Exception);
 }
 
 BOOST_AUTO_TEST_CASE(non_comm_constructor) {
@@ -121,9 +121,12 @@ BOOST_AUTO_TEST_CASE(non_comm_constructor) {
     }
   }
 
-  BOOST_CHECK_CLOSE(x.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      x.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
   BOOST_CHECK(x.nnz() == x.data().size() - zero_tile_count);
 
   // use the sparse ctor
@@ -194,9 +197,12 @@ BOOST_AUTO_TEST_CASE(comm_constructor) {
     }
   }
 
-  BOOST_CHECK_CLOSE(x.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      x.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
   BOOST_CHECK_EQUAL(x.nnz(), x.data().size() - zero_tile_count);
 
   // use the sparse ctor
@@ -270,7 +276,7 @@ BOOST_AUTO_TEST_CASE(block) {
   // change default threshold to make sure it's not inherited
   auto resetter = set_threshold_to_max();
 
-  auto less = std::less<std::size_t>();
+  auto less_equal = std::less_equal<std::size_t>();
 
   for (auto lower_it = tr.tiles_range().begin();
        lower_it != tr.tiles_range().end(); ++lower_it) {
@@ -281,7 +287,7 @@ BOOST_AUTO_TEST_CASE(block) {
       auto upper = *upper_it;
       for (auto it = upper.begin(); it != upper.end(); ++it) *it += 1;
 
-      if (std::equal(lower.begin(), lower.end(), upper.begin(), less)) {
+      if (std::equal(lower.begin(), lower.end(), upper.begin(), less_equal)) {
         // Check that the block function does not throw an exception
         SparseShape<float> result;
         BOOST_REQUIRE_NO_THROW(result = sparse_shape.block(lower, upper));
@@ -321,7 +327,9 @@ BOOST_AUTO_TEST_CASE(block) {
         }
         BOOST_CHECK_CLOSE(
             result.sparsity(),
-            float(zero_tile_count) / float(result.data().range().volume()),
+            result.data().range().volume() > 0
+                ? float(zero_tile_count) / float(result.data().range().volume())
+                : 0,
             tolerance);
 
         // validate other block functions
@@ -350,8 +358,8 @@ BOOST_AUTO_TEST_CASE(block) {
 #endif
       } else {
         // Check that block throws an exception with a bad block range
-        BOOST_CHECK_THROW(sparse_shape.block(lower, upper),
-                          TiledArray::Exception);
+        BOOST_CHECK_TA_ASSERT(sparse_shape.block(lower, upper),
+                              TiledArray::Exception);
       }
     }
   }
@@ -361,7 +369,7 @@ BOOST_AUTO_TEST_CASE(block_scale) {
   // change default threshold to make sure it's not inherited
   auto resetter = set_threshold_to_max();
 
-  auto less = std::less<std::size_t>();
+  auto less_equal = std::less_equal<std::size_t>();
   const float factor = 3.3;
 
   for (auto lower_it = tr.tiles_range().begin();
@@ -373,7 +381,7 @@ BOOST_AUTO_TEST_CASE(block_scale) {
       auto upper = *upper_it;
       for (auto it = upper.begin(); it != upper.end(); ++it) *it += 1;
 
-      if (std::equal(lower.begin(), lower.end(), upper.begin(), less)) {
+      if (std::equal(lower.begin(), lower.end(), upper.begin(), less_equal)) {
         // Check that the block function does not throw an exception
         SparseShape<float> result;
         BOOST_REQUIRE_NO_THROW(result =
@@ -413,7 +421,9 @@ BOOST_AUTO_TEST_CASE(block_scale) {
         }
         BOOST_CHECK_CLOSE(
             result.sparsity(),
-            float(zero_tile_count) / float(result.data().range().volume()),
+            result.data().range().volume() > 0
+                ? float(zero_tile_count) / float(result.data().range().volume())
+                : 0,
             tolerance);
 
         // validate other block functions
@@ -447,8 +457,8 @@ BOOST_AUTO_TEST_CASE(block_scale) {
 
       } else {
         // Check that block throws an exception with a bad block range
-        BOOST_CHECK_THROW(sparse_shape.block(lower, upper),
-                          TiledArray::Exception);
+        BOOST_CHECK_TA_ASSERT(sparse_shape.block(lower, upper),
+                              TiledArray::Exception);
       }
     }
   }
@@ -458,7 +468,7 @@ BOOST_AUTO_TEST_CASE(block_perm) {
   // change default threshold to make sure it's not inherited
   auto resetter = set_threshold_to_max();
 
-  auto less = std::less<std::size_t>();
+  auto less_equal = std::less_equal<std::size_t>();
   const auto inv_perm = perm.inv();
 
   for (auto lower_it = tr.tiles_range().begin();
@@ -470,7 +480,7 @@ BOOST_AUTO_TEST_CASE(block_perm) {
       auto upper = *upper_it;
       for (auto it = upper.begin(); it != upper.end(); ++it) *it += 1;
 
-      if (std::equal(lower.begin(), lower.end(), upper.begin(), less)) {
+      if (std::equal(lower.begin(), lower.end(), upper.begin(), less_equal)) {
         // Check that the block function does not throw an exception
         SparseShape<float> result;
         BOOST_REQUIRE_NO_THROW(result = sparse_shape.block(lower, upper, perm));
@@ -513,7 +523,9 @@ BOOST_AUTO_TEST_CASE(block_perm) {
         }
         BOOST_CHECK_CLOSE(
             result.sparsity(),
-            float(zero_tile_count) / float(result.data().range().volume()),
+            result.data().range().volume() > 0
+                ? float(zero_tile_count) / float(result.data().range().volume())
+                : 0,
             tolerance);
 
         // validate other block functions
@@ -546,8 +558,8 @@ BOOST_AUTO_TEST_CASE(block_perm) {
 
       } else {
         // Check that block throws an exception with a bad block range
-        BOOST_CHECK_THROW(sparse_shape.block(lower, upper),
-                          TiledArray::Exception);
+        BOOST_CHECK_TA_ASSERT(sparse_shape.block(lower, upper),
+                              TiledArray::Exception);
       }
     }
   }
@@ -557,7 +569,7 @@ BOOST_AUTO_TEST_CASE(block_scale_perm) {
   // change default threshold to make sure it's not inherited
   auto resetter = set_threshold_to_max();
 
-  auto less = std::less<std::size_t>();
+  auto less_equal = std::less_equal<std::size_t>();
   const float factor = 3.3;
   const auto inv_perm = perm.inv();
 
@@ -570,7 +582,7 @@ BOOST_AUTO_TEST_CASE(block_scale_perm) {
       auto upper = *upper_it;
       for (auto it = upper.begin(); it != upper.end(); ++it) *it += 1;
 
-      if (std::equal(lower.begin(), lower.end(), upper.begin(), less)) {
+      if (std::equal(lower.begin(), lower.end(), upper.begin(), less_equal)) {
         // Check that the block function does not throw an exception
         SparseShape<float> result;
         BOOST_REQUIRE_NO_THROW(
@@ -614,7 +626,9 @@ BOOST_AUTO_TEST_CASE(block_scale_perm) {
         }
         BOOST_CHECK_CLOSE(
             result.sparsity(),
-            float(zero_tile_count) / float(result.data().range().volume()),
+            result.data().range().volume() > 0
+                ? float(zero_tile_count) / float(result.data().range().volume())
+                : 0,
             tolerance);
 
         // validate other block functions
@@ -649,8 +663,8 @@ BOOST_AUTO_TEST_CASE(block_scale_perm) {
 
       } else {
         // Check that block throws an exception with a bad block range
-        BOOST_CHECK_THROW(sparse_shape.block(lower, upper),
-                          TiledArray::Exception);
+        BOOST_CHECK_TA_ASSERT(sparse_shape.block(lower, upper),
+                              TiledArray::Exception);
       }
     }
   }
@@ -706,9 +720,12 @@ BOOST_AUTO_TEST_CASE(transform) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(mask) {
@@ -745,9 +762,12 @@ BOOST_AUTO_TEST_CASE(mask) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(scale) {
@@ -778,9 +798,12 @@ BOOST_AUTO_TEST_CASE(scale) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(scale_perm) {
@@ -812,9 +835,12 @@ BOOST_AUTO_TEST_CASE(scale_perm) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(add) {
@@ -848,9 +874,12 @@ BOOST_AUTO_TEST_CASE(add) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
   BOOST_CHECK_EQUAL(result.nnz(), result.data().size() - zero_tile_count);
 }
 
@@ -885,9 +914,12 @@ BOOST_AUTO_TEST_CASE(add_scale) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(add_perm) {
@@ -922,9 +954,12 @@ BOOST_AUTO_TEST_CASE(add_perm) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(add_scale_perm) {
@@ -959,9 +994,12 @@ BOOST_AUTO_TEST_CASE(add_scale_perm) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(add_const) {
@@ -998,9 +1036,12 @@ BOOST_AUTO_TEST_CASE(add_const) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(add_const_perm) {
@@ -1037,9 +1078,12 @@ BOOST_AUTO_TEST_CASE(add_const_perm) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(subt) {
@@ -1073,9 +1117,12 @@ BOOST_AUTO_TEST_CASE(subt) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(subt_scale) {
@@ -1109,9 +1156,12 @@ BOOST_AUTO_TEST_CASE(subt_scale) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(subt_perm) {
@@ -1146,9 +1196,12 @@ BOOST_AUTO_TEST_CASE(subt_perm) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(subt_scale_perm) {
@@ -1183,9 +1236,12 @@ BOOST_AUTO_TEST_CASE(subt_scale_perm) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(subt_const) {
@@ -1220,9 +1276,12 @@ BOOST_AUTO_TEST_CASE(subt_const) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(subt_const_perm) {
@@ -1260,9 +1319,12 @@ BOOST_AUTO_TEST_CASE(subt_const_perm) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(mult) {
@@ -1295,9 +1357,12 @@ BOOST_AUTO_TEST_CASE(mult) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(mult_scale) {
@@ -1330,9 +1395,12 @@ BOOST_AUTO_TEST_CASE(mult_scale) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(mult_perm) {
@@ -1368,9 +1436,12 @@ BOOST_AUTO_TEST_CASE(mult_perm) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(mult_scale_perm) {
@@ -1406,9 +1477,12 @@ BOOST_AUTO_TEST_CASE(mult_scale_perm) {
     }
   }
 
-  BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(tr.tiles_range().volume()),
-                    tolerance);
+  BOOST_CHECK_CLOSE(
+      result.sparsity(),
+      tr.tiles_range().volume() > 0
+          ? float(zero_tile_count) / float(tr.tiles_range().volume())
+          : 0,
+      tolerance);
 }
 
 BOOST_AUTO_TEST_CASE(gemm) {
@@ -1470,7 +1544,9 @@ BOOST_AUTO_TEST_CASE(gemm) {
   }
 
   BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(result_norms.size()),
+                    result_norms.size() > 0
+                        ? float(zero_tile_count) / float(result_norms.size())
+                        : 0,
                     tolerance);
 }
 
@@ -1538,7 +1614,9 @@ BOOST_AUTO_TEST_CASE(gemm_perm) {
   }
 
   BOOST_CHECK_CLOSE(result.sparsity(),
-                    float(zero_tile_count) / float(result_norms.size()),
+                    result_norms.size() > 0
+                        ? float(zero_tile_count) / float(result_norms.size())
+                        : 0,
                     tolerance);
 }
 

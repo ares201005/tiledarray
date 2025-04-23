@@ -113,6 +113,22 @@ void cholesky_lsolve(Op transpose, Matrix<T>& A, Matrix<T>& X) {
 }
 
 template <typename T>
+void qr_solve(Matrix<T>& A, Matrix<T>& B,
+              const TiledArray::detail::real_t<T> cond) {
+  integer m = A.rows();
+  integer n = A.cols();
+  integer nrhs = B.cols();
+  T* a = A.data();
+  integer lda = A.rows();
+  T* b = B.data();
+  integer ldb = B.rows();
+  std::vector<integer> jpiv(n);
+  const TiledArray::detail::real_t<T> rcond = 1 / cond;
+  integer rank = -1;
+  TA_LAPACK(gelsy, m, n, nrhs, a, lda, b, ldb, jpiv.data(), rcond, &rank);
+}
+
+template <typename T>
 void heig(Matrix<T>& A, std::vector<TiledArray::detail::real_t<T>>& W) {
   auto jobz = lapack::Job::Vec;
   auto uplo = lapack::Uplo::Lower;
@@ -121,6 +137,7 @@ void heig(Matrix<T>& A, std::vector<TiledArray::detail::real_t<T>>& W) {
   integer lda = A.rows();
   W.resize(n);
   auto* w = W.data();
+  if (n == 0) return;
   if constexpr (TiledArray::detail::is_complex_v<T>)
     TA_LAPACK(heev, jobz, uplo, n, a, lda, w);
   else
@@ -140,6 +157,7 @@ void heig(Matrix<T>& A, Matrix<T>& B,
   integer ldb = B.rows();
   W.resize(n);
   auto* w = W.data();
+  if (n == 0) return;
   if constexpr (TiledArray::detail::is_complex_v<T>)
     TA_LAPACK(hegv, itype, jobz, uplo, n, a, lda, b, ldb, w);
   else
@@ -248,7 +266,7 @@ void householder_qr(Matrix<T>& V, Matrix<T>& R) {
     lapack::orgqr(m, n, k, v, ldv, tau.data());
 }
 
-#define TA_LAPACK_EXPLICIT(MATRIX, VECTOR)                         \
+#define TA_LAPACK_EXPLICIT(MATRIX, VECTOR, DOUBLE)                 \
   template void cholesky(MATRIX&);                                 \
   template void cholesky_linv(MATRIX&);                            \
   template void cholesky_solve(MATRIX&, MATRIX&);                  \
@@ -259,11 +277,12 @@ void householder_qr(Matrix<T>& V, Matrix<T>& R) {
   template void lu_solve(MATRIX&, MATRIX&);                        \
   template void lu_inv(MATRIX&);                                   \
   template void householder_qr<true>(MATRIX&, MATRIX&);            \
-  template void householder_qr<false>(MATRIX&, MATRIX&);
+  template void householder_qr<false>(MATRIX&, MATRIX&);           \
+  template void qr_solve(MATRIX&, MATRIX&, DOUBLE)
 
-TA_LAPACK_EXPLICIT(Matrix<double>, std::vector<double>);
-TA_LAPACK_EXPLICIT(Matrix<float>, std::vector<float>);
-TA_LAPACK_EXPLICIT(Matrix<std::complex<double>>, std::vector<double>);
-TA_LAPACK_EXPLICIT(Matrix<std::complex<float>>, std::vector<float>);
+TA_LAPACK_EXPLICIT(Matrix<double>, std::vector<double>, double );
+TA_LAPACK_EXPLICIT(Matrix<float>, std::vector<float>, float);
+TA_LAPACK_EXPLICIT(Matrix<std::complex<double>>, std::vector<double>, double);
+TA_LAPACK_EXPLICIT(Matrix<std::complex<float>>, std::vector<float>, float);
 
 }  // namespace TiledArray::math::linalg::rank_local

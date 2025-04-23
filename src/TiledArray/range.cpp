@@ -1,6 +1,6 @@
 /*
  *  This file is a part of TiledArray.
- *  Copyright (C) 2018  Virginia Tech
+ *  Copyright (C) 2025  Virginia Tech
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -15,28 +15,16 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
- *  Chong Peng
- *  Department of Chemistry, Virginia Tech
- *
- *  expressions_sparse.cpp
- *  May 4, 2018
- *
  */
 
-#include <TiledArray/config.h>
+#include "TiledArray/range.h"
 
-#ifdef TILEDARRAY_HAS_BTAS
-#include "expressions_fixture.h"
+namespace TiledArray {
 
-typedef ExpressionsFixture<
-    TA::Tile<btas::Tensor<int, TiledArray::Range, btas::varray<int>>>,
-    TA::DensePolicy>
-    EF_TABtasI;
+std::string to_string(const Range& r) {
+  std::ostringstream oss;
+  oss << r;
+  return oss.str();
+}
 
-typedef boost::mpl::vector<EF_TABtasI> Fixtures;
-
-BOOST_AUTO_TEST_SUITE(expressions_btas_suite)
-
-#include "expressions_impl.h"
-
-#endif
+}  // namespace TiledArray

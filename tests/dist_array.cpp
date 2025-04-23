@@ -60,7 +60,7 @@ namespace {
 std::string to_parallel_archive_file_name(const char* prefix_name, int rank) {
   char buf[256];
   MADNESS_ASSERT(strlen(prefix_name) + 7 <= sizeof(buf));
-  sprintf(buf, "%s.%5.5d", prefix_name, rank);
+  snprintf(buf, sizeof(buf), "%s.%5.5d", prefix_name, rank);
   return buf;
 }
 }  // namespace
@@ -716,7 +716,7 @@ BOOST_AUTO_TEST_CASE(parallel_serialization) {
   mktemp(archive_file_prefix_name);
   madness::archive::ParallelOutputArchive<> oar(world, archive_file_prefix_name,
                                                 nio);
-  oar& a;
+  oar & a;
   oar.close();
 
   madness::archive::ParallelInputArchive<> iar(world, archive_file_prefix_name,
@@ -740,7 +740,7 @@ BOOST_AUTO_TEST_CASE(parallel_sparse_serialization) {
   mktemp(archive_file_prefix_name);
   madness::archive::ParallelOutputArchive<> oar(world, archive_file_prefix_name,
                                                 nio);
-  oar& b;
+  oar & b;
   oar.close();
 
   madness::archive::ParallelInputArchive<> iar(world, archive_file_prefix_name,
@@ -783,7 +783,7 @@ BOOST_AUTO_TEST_CASE(issue_225) {
   madness::archive::BinaryFstreamInputArchive iar(archive_file_name);
   decltype(S) S_read;
   decltype(St) St_read;
-  iar& S_read& St_read;
+  iar & S_read & St_read;
 
   BOOST_CHECK_EQUAL(S_read.trange(), S.trange());
   BOOST_REQUIRE(S_read.shape() == S.shape());
@@ -942,6 +942,69 @@ BOOST_AUTO_TEST_CASE(reduction) {
 
   BOOST_REQUIRE(array_norm == TA::norm2(array));
   BOOST_REQUIRE(array_norm = std::sqrt(TA::dot(array, array)));
+}
+
+BOOST_AUTO_TEST_CASE(size_of) {
+  using Numeric = double;
+  using T = Tensor<Numeric>;
+  using ToT = Tensor<T>;
+  using Policy = SparsePolicy;
+  using ArrayToT = DistArray<ToT, Policy>;
+
+  auto unit_T = [](Range const& rng) { return T(rng, Numeric{1}); };
+
+  auto unit_ToT = [unit_T](Range const& rngo, Range const& rngi) {
+    return ToT(rngo, unit_T(rngi));
+  };
+
+  size_t constexpr nrows = 3;
+  size_t constexpr ncols = 4;
+  TiledRange const trange({{0, 2, 5, 7}, {0, 5, 7, 10, 12}});
+  TA_ASSERT(trange.tiles_range().extent().at(0) == nrows &&
+                trange.tiles_range().extent().at(1) == ncols,
+            "Following code depends on this condition.");
+
+  // this Range is used to construct all inner tensors of the tile with
+  // tile index @c tix.
+  auto inner_dims = [nrows, ncols](Range::index_type const& tix) -> Range {
+    static std::array<size_t, nrows> const rows{7, 8, 9};
+    static std::array<size_t, ncols> const cols{7, 8, 9, 10};
+
+    TA_ASSERT(tix.size() == 2, "Only rank-2 tensor expected.");
+    return Range({rows[tix.at(0) % nrows], cols[tix.at(1) % ncols]});
+  };
+
+  // let's make all 'diagonal' tiles zero
+  auto zero_tile = [](Range::index_type const& tix) -> bool {
+    return tix.at(0) == tix.at(1);
+  };
+
+  auto make_tile = [inner_dims,  //
+                    zero_tile,   //
+                    &trange,     //
+                    unit_ToT](auto& tile, auto const& rng) {
+    auto&& tix = trange.element_to_tile(rng.lobound());
+    if (zero_tile(tix))
+      return 0.;
+    else {
+      tile = unit_ToT(rng, inner_dims(tix));
+      return tile.norm();
+    }
+  };
+
+  auto& world = get_default_world();
+
+  // all non-zero inner tensors of this ToT array are unit (ie all
+  // inner tensors' elements are 1.)
+  auto array = make_array<ArrayToT>(world, trange, make_tile);
+
+  auto sz0 = TiledArray::size_of<MemorySpace::Host>(array);
+  world.gop.sum(sz0);
+  const auto sz0_expected =
+      /* size on 1 rank */ 56728 +
+      /* size of shape on ranks 1 ... N-1 */ (world.size() - 1) *
+          TiledArray::size_of<MemorySpace::Host>(array.shape());
+  BOOST_REQUIRE(sz0 == sz0_expected);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

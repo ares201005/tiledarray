@@ -26,7 +26,9 @@
 #ifndef TILEDARRAY_CONVERSIONS_MAKE_ARRAY_H__INCLUDED
 #define TILEDARRAY_CONVERSIONS_MAKE_ARRAY_H__INCLUDED
 
+#include "TiledArray/array_impl.h"
 #include "TiledArray/external/madness.h"
+#include "TiledArray/pmap/replicated_pmap.h"
 #include "TiledArray/shape.h"
 #include "TiledArray/type_traits.h"
 
@@ -72,12 +74,16 @@ template <typename Array, typename Op,
           typename std::enable_if<is_dense<Array>::value>::type* = nullptr>
 inline Array make_array(
     World& world, const detail::trange_t<Array>& trange,
-    const std::shared_ptr<const detail::pmap_t<Array> >& pmap, Op&& op) {
+    const std::shared_ptr<const detail::pmap_t<Array>>& pmap, Op&& op) {
   typedef typename Array::value_type value_type;
   typedef typename value_type::range_type range_type;
 
   // Make an empty result array
   Array result(world, trange);
+
+  // Construct the task function used to construct the result tiles.
+  std::atomic<std::int64_t> ntask_completed{0};
+  std::int64_t ntask_created{0};
 
   // Iterate over local tiles of arg
   for (const auto index : *result.pmap()) {
@@ -89,10 +95,19 @@ inline Array make_array(
           return tile;
         },
         trange.make_tile_range(index));
-
+    ++ntask_created;
+    tile.register_callback(
+        new detail::IncrementCounter<decltype(ntask_completed)>(
+            ntask_completed));
     // Store result tile
-    result.set(index, tile);
+    result.set(index, std::move(tile));
   }
+
+  // Wait for tile tasks to complete
+  if (ntask_created > 0)
+    world.await([&ntask_completed, ntask_created]() -> bool {
+      return ntask_completed == ntask_created;
+    });
 
   return result;
 }
@@ -136,10 +151,10 @@ template <typename Array, typename Op,
           typename std::enable_if<!is_dense<Array>::value>::type* = nullptr>
 inline Array make_array(
     World& world, const detail::trange_t<Array>& trange,
-    const std::shared_ptr<const detail::pmap_t<Array> >& pmap, Op&& op) {
+    const std::shared_ptr<const detail::pmap_t<Array>>& pmap, Op&& op) {
   typedef typename Array::value_type value_type;
   typedef typename Array::ordinal_type ordinal_type;
-  typedef std::pair<ordinal_type, Future<value_type> > datum_type;
+  typedef std::pair<ordinal_type, Future<value_type>> datum_type;
 
   // Create a vector to hold local tiles
   std::vector<datum_type> tiles;
@@ -150,26 +165,28 @@ inline Array make_array(
       trange.tiles_range(), 0);
 
   // Construct the task function used to construct the result tiles.
-  madness::AtomicInt counter;
-  counter = 0;
-  int task_count = 0;
+  std::atomic<std::int64_t> ntask_completed{0};
+  std::int64_t ntask_created{0};
   auto task = [&](const ordinal_type index) -> value_type {
     value_type tile;
     tile_norms.at_ordinal(index) = op(tile, trange.make_tile_range(index));
-    ++counter;
     return tile;
   };
 
   for (const auto index : *pmap) {
     auto result_tile = world.taskq.add(task, index);
-    ++task_count;
+    ++ntask_created;
+    result_tile.register_callback(
+        new detail::IncrementCounter<decltype(ntask_completed)>(
+            ntask_completed));
     tiles.emplace_back(index, std::move(result_tile));
   }
 
   // Wait for tile norm data to be collected.
-  if (task_count > 0)
-    world.await(
-        [&counter, task_count]() -> bool { return counter == task_count; });
+  if (ntask_created > 0)
+    world.await([&ntask_completed, ntask_created]() -> bool {
+      return ntask_completed == ntask_created;
+    });
 
   // Construct the new array
   Array result(world, trange,
@@ -223,6 +240,41 @@ inline Array make_array(World& world, const detail::trange_t<Array>& trange,
                            detail::policy_t<Array>::default_pmap(
                                world, trange.tiles_range().volume()),
                            op);
+}
+
+/// a make_array variant that uses a sequence of {tile_index,tile} pairs
+/// to construct a DistArray with default pmap
+template <typename Array, typename Tiles>
+Array make_array(World& world, const detail::trange_t<Array>& tiled_range,
+                 Tiles begin, Tiles end, bool replicated) {
+  Array array;
+  using Tuple = std::remove_reference_t<decltype(*begin)>;
+  using Index = std::tuple_element_t<0, Tuple>;
+  using shape_type = typename Array::shape_type;
+
+  std::shared_ptr<typename Array::pmap_interface> pmap;
+  if (replicated) {
+    size_t ntiles = tiled_range.tiles_range().volume();
+    pmap = std::make_shared<detail::ReplicatedPmap>(world, ntiles);
+  }
+
+  if constexpr (shape_type::is_dense()) {
+    array = Array(world, tiled_range, pmap);
+  } else {
+    std::vector<std::pair<Index, float>> tile_norms;
+    for (Tiles it = begin; it != end; ++it) {
+      auto [index, tile] = *it;
+      tile_norms.push_back({index, tile.norm()});
+    }
+    shape_type shape(world, tile_norms, tiled_range);
+    array = Array(world, tiled_range, shape, pmap);
+  }
+  for (Tiles it = begin; it != end; ++it) {
+    auto [index, tile] = *it;
+    if (array.is_zero(index)) continue;
+    array.set(index, tile);
+  }
+  return array;
 }
 
 }  // namespace TiledArray

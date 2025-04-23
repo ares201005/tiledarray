@@ -36,12 +36,10 @@
 #elif defined(TILEDARRAY_HAS_CUDA)
 #include <cuda.h>
 #include <cuda_runtime.h>
-#include <nvToolsExt.h>
+#include <nvtx3/nvToolsExt.h>
 #include <thrust/system/cuda/error.h>
 #include <thrust/system_error.h>
 #endif
-
-#include <TiledArray/external/umpire.h>
 
 #include <TiledArray/external/madness.h>
 #include <madness/world/print.h>
@@ -50,6 +48,20 @@
 
 #include <TiledArray/error.h>
 #include <TiledArray/initialize.h>
+
+#include <TiledArray/external/umpire.h>
+
+namespace TiledArray::detail {
+
+struct get_um_allocator {
+  inline umpire::Allocator& operator()();
+};
+
+struct get_pinned_allocator {
+  inline umpire::Allocator& operator()();
+};
+
+}  // namespace TiledArray::detail
 
 #if defined(TILEDARRAY_HAS_CUDA)
 
@@ -798,9 +810,10 @@ class Env {
     static std::unique_ptr<Env> instance_{nullptr};
     return instance_;
   }
-};
+};  // class Env
 
 namespace detail {
+
 // in a madness device task point to its local optional stream to use by
 // madness_task_stream_opt; set to nullptr after task callable finished
 inline std::optional<Stream>*& madness_task_stream_opt_ptr_accessor() {
@@ -892,7 +905,19 @@ device::Stream stream_for(const Range& range) {
 
 }  // namespace device
 
+namespace detail {
+
+inline umpire::Allocator& get_um_allocator::operator()() {
+  return deviceEnv::instance()->um_allocator();
+}
+
+inline umpire::Allocator& get_pinned_allocator::operator()() {
+  return deviceEnv::instance()->pinned_allocator();
+}
+
 #endif  // TILEDARRAY_HAS_DEVICE
+
+}  // namespace detail
 
 #ifdef TILEDARRAY_HAS_CUDA
 namespace nvidia {

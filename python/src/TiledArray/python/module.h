@@ -40,11 +40,8 @@ static World &initialize() {
   // this loads MPI before TA tries to do it
   int initialized = 0;
   MPI_Initialized(&initialized);
-  MPI_Comm ta_comm;
 
-  if (!initialized) {
-    ta_comm = MPI_COMM_WORLD;
-  } else {
+  if (initialized) {
     int thread_level;
     MPI_Query_thread(&thread_level);
     if (thread_level != MPI_THREAD_MULTIPLE)
@@ -65,7 +62,7 @@ static World &initialize() {
     //madness::initialize(argc, argv, ta_comm, -1);
     initialized_madness = true;
   }
-  TiledArray::World &world = TiledArray::initialize(argc, argv, ta_comm);
+  TiledArray::World &world = TiledArray::initialize(argc, argv, MPI_COMM_WORLD);
   TiledArray::set_default_world(world);
   if (world.rank() == 0) {
     std::cout << "initialized TA in a world with " << world.size() << " ranks"

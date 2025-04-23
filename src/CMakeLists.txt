@@ -38,6 +38,7 @@ TiledArray/error.h
 TiledArray/initialize.h
 TiledArray/perm_index.h
 TiledArray/permutation.h
+TiledArray/platform.h
 TiledArray/proc_grid.h
 TiledArray/range.h
 TiledArray/range1.h
@@ -134,7 +135,6 @@ TiledArray/external/btas.h
 TiledArray/external/madness.h
 TiledArray/external/umpire.h
 TiledArray/host/env.h
-TiledArray/host/allocator.h
 TiledArray/math/blas.h
 TiledArray/math/gemm_helper.h
 TiledArray/math/outer.h
@@ -162,6 +162,8 @@ TiledArray/tensor/complex.h
 TiledArray/tensor/kernels.h
 TiledArray/tensor/operators.h
 TiledArray/tensor/permute.h
+TiledArray/tensor/print.ipp
+TiledArray/tensor/print.h
 TiledArray/tensor/shift_wrapper.h
 TiledArray/tensor/tensor.h
 TiledArray/tensor/tensor_interface.h
@@ -204,15 +206,32 @@ TiledArray/util/time.h
 TiledArray/util/vector.h
 )
 
-if(HIP_FOUND OR CUDA_FOUND)
+set(TILEDARRAY_SOURCE_FILES
+        TiledArray/array_impl.cpp
+        TiledArray/dist_array.cpp
+        TiledArray/range.cpp
+        TiledArray/sparse_shape.cpp
+        TiledArray/tensor_impl.cpp
+        TiledArray/tiledarray.cpp
+        TiledArray/version.cpp
+        TiledArray/einsum/index.cpp
+        TiledArray/expressions/permopt.cpp
+        TiledArray/host/env.cpp
+        TiledArray/math/linalg/basic.cpp
+        TiledArray/math/linalg/rank-local.cpp
+        TiledArray/tensor/print.cpp
+        TiledArray/tensor/tensor.cpp
+        TiledArray/util/backtrace.cpp
+        TiledArray/util/bug.cpp
+        TiledArray/util/ptr_registry.cpp
+        TiledArray/util/random.cpp
+        TiledArray/util/threads.cpp
+)
+
+if(TILEDARRAY_HAS_HIP OR TILEDARRAY_HAS_CUDA)
   list(APPEND TILEDARRAY_HEADER_FILES
           TiledArray/external/device.h
-          TiledArray/external/librett.h)
-endif()
-
-if(CUDA_FOUND OR HIP_FOUND)
-  list(APPEND TILEDARRAY_HEADER_FILES
-          TiledArray/device/blas.cpp
+          TiledArray/external/librett.h
           TiledArray/device/blas.h
           TiledArray/device/btas.h
           TiledArray/device/btas_um_tensor.h
@@ -221,35 +240,19 @@ if(CUDA_FOUND OR HIP_FOUND)
           TiledArray/device/kernel/reduce_kernel.h
           TiledArray/device/kernel/thrust/mult_kernel.h
           TiledArray/device/kernel/thrust/reduce_kernel.h
-          TiledArray/device/platform.h
           TiledArray/device/thrust.h
-          TiledArray/device/allocators.h
-          TiledArray/device/um_storage.h)
-  if(CUDA_FOUND)
+          TiledArray/device/um_storage.h
+  )
+  list(APPEND TILEDARRAY_SOURCE_FILES
+          TiledArray/device/blas.cpp
+  )
+  if(TILEDARRAY_HAS_CUDA)
     list(APPEND TILEDARRAY_HEADER_FILES
        TiledArray/external/cuda.h
        TiledArray/device/cpu_cuda_vector.h)
-  endif(CUDA_FOUND)
-endif(CUDA_FOUND OR HIP_FOUND)
+  endif(TILEDARRAY_HAS_CUDA)
+endif(TILEDARRAY_HAS_HIP OR TILEDARRAY_HAS_CUDA)
 
-set(TILEDARRAY_SOURCE_FILES
-TiledArray/tiledarray.cpp
-TiledArray/tensor/tensor.cpp
-TiledArray/sparse_shape.cpp
-TiledArray/tensor_impl.cpp
-TiledArray/array_impl.cpp
-TiledArray/dist_array.cpp
-TiledArray/version.cpp
-TiledArray/einsum/index.cpp
-TiledArray/expressions/permopt.cpp
-TiledArray/math/linalg/basic.cpp
-TiledArray/math/linalg/rank-local.cpp
-TiledArray/util/backtrace.cpp
-TiledArray/util/bug.cpp
-TiledArray/util/ptr_registry.cpp
-TiledArray/util/random.cpp
-TiledArray/util/threads.cpp
-)
 # feed TILEDARRAY_GIT_REVISION and TILEDARRAY_GIT_DESCRIPTION to TiledArray/version.cpp only to avoid recompiling everything
 set_source_files_properties(
         TiledArray/version.cpp
@@ -261,13 +264,13 @@ set_source_files_properties(
 # when FetchContent umpire: set(_TILEDARRAY_DEPENDENCIES MADworld TiledArray_Eigen BTAS::BTAS blaspp_headers umpire)
 set(_TILEDARRAY_DEPENDENCIES MADworld TiledArray_Eigen BTAS::BTAS blaspp_headers TiledArray_UMPIRE range-v3::range-v3)
 
-if(CUDA_FOUND OR HIP_FOUND)
+if(TILEDARRAY_HAS_CUDA OR TILEDARRAY_HAS_HIP)
 
   set(TILEDARRAY_DEVICE_SOURCE_FILES
           TiledArray/device/btas_um_tensor.cpp
   )
 
-  if(CUDA_FOUND)
+  if(TILEDARRAY_HAS_CUDA)
 
     list(APPEND TILEDARRAY_DEVICE_SOURCE_FILES
           TiledArray/device/cpu_cuda_vector.cu
@@ -282,11 +285,11 @@ if(CUDA_FOUND OR HIP_FOUND)
     endforeach()
 
     # the list of libraries on which TiledArray depends on
-    list(APPEND _TILEDARRAY_DEPENDENCIES CUDA::cudart CUDA::cublas CUDA::nvToolsExt)
+    list(APPEND _TILEDARRAY_DEPENDENCIES CUDA::cudart CUDA::cublas CUDA::nvtx3)
 
-  endif(CUDA_FOUND)
+  endif(TILEDARRAY_HAS_CUDA)
 
-  if (HIP_FOUND)
+  if (TILEDARRAY_HAS_HIP)
     list(APPEND TILEDARRAY_DEVICE_SOURCE_FILES
             TiledArray/device/kernel/thrust/mult_kernel.hip
             TiledArray/device/kernel/thrust/reduce_kernel.hip
@@ -303,7 +306,7 @@ if(CUDA_FOUND OR HIP_FOUND)
   list(APPEND _TILEDARRAY_DEPENDENCIES TiledArray_LIBRETT)
 
   list(APPEND TILEDARRAY_SOURCE_FILES "${TILEDARRAY_DEVICE_SOURCE_FILES}")
-endif(CUDA_FOUND OR HIP_FOUND)
+endif(TILEDARRAY_HAS_CUDA OR TILEDARRAY_HAS_HIP)
 
 if( TARGET TiledArray_SCALAPACK )
   list(APPEND _TILEDARRAY_DEPENDENCIES TiledArray_SCALAPACK)
@@ -350,10 +353,10 @@ add_library(tiledarray ${TILEDARRAY_SOURCE_FILES} ${TILEDARRAY_HEADER_FILES})
   target_compile_options(${targetname} PUBLIC ${CMAKE_CXX_FLAG_LIST})
   target_compile_features(${targetname} PUBLIC "cxx_std_${CMAKE_CXX_STANDARD}")
 
-  if (CUDA_FOUND)
+  if (TILEDARRAY_HAS_CUDA)
     target_include_directories(${targetname} PUBLIC ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
     target_compile_features(tiledarray PUBLIC "cuda_std_${CMAKE_CUDA_STANDARD}")
-  endif (CUDA_FOUND)
+  endif (TILEDARRAY_HAS_CUDA)
 
   if (LAPACK_INCLUDE_DIRS)
     target_include_directories(${targetname} PUBLIC ${LAPACK_INCLUDE_DIRS})

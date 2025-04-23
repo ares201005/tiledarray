@@ -24,14 +24,14 @@
 #ifndef TILEDARRAY_DEVICE_UM_VECTOR_H__INCLUDED
 #define TILEDARRAY_DEVICE_UM_VECTOR_H__INCLUDED
 
-#include <TiledArray/device/allocators.h>
+#include <TiledArray/external/device.h>
 
 #ifdef TILEDARRAY_HAS_DEVICE
 
 #include <btas/array_adaptor.h>
 #include <btas/varray/varray.h>
 
-#include <TiledArray/device/platform.h>
+#include <TiledArray/platform.h>
 #include <TiledArray/utility.h>
 
 #include <madness/world/archive.h>

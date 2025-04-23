@@ -129,8 +129,9 @@ bool operator!=(const TileReference<Impl>& a, const TileReference<Impl>& b) {
 }
 
 /// redirect operator to std::ostream for TileReference objects
-template <typename Impl>
-std::ostream& operator<<(std::ostream& os, const TileReference<Impl>& a) {
+template <typename Char, typename CharTraits, typename Impl>
+std::basic_ostream<Char, CharTraits>& operator<<(
+    std::basic_ostream<Char, CharTraits>& os, const TileReference<Impl>& a) {
   os << a.get();
   return os;
 }
@@ -192,11 +193,24 @@ bool operator!=(const TileConstReference<Impl>& a,
 }
 
 /// redirect operator to std::ostream for TileConstReference objects
-template <typename Impl>
-std::ostream& operator<<(std::ostream& os, const TileConstReference<Impl>& a) {
+template <typename Char, typename CharTraits, typename Impl>
+std::basic_ostream<Char, CharTraits>& operator<<(
+    std::basic_ostream<Char, CharTraits>& os,
+    const TileConstReference<Impl>& a) {
   os << a.get();
   return os;
 }
+
+/// Callaback used to update counter (typically, task counter)
+template <typename AtomicInt>
+struct IncrementCounter : public madness::CallbackInterface {
+  AtomicInt& counter;
+  IncrementCounter(AtomicInt& counter) : counter(counter) {}
+  void notify() override {
+    ++counter;
+    delete this;
+  }
+};
 
 }  // namespace detail
 }  // namespace TiledArray
@@ -425,6 +439,9 @@ class ArrayImpl : public TensorImpl<Policy>,
   typedef typename TensorImpl_::pmap_interface
       pmap_interface;       ///< process map interface type
   typedef Tile value_type;  ///< Tile or data type
+  typedef typename Tile::value_type
+      element_type;  ///< The value type of a tile. It is the numeric_type for
+                     ///< tensor-of-scalars tiles.
   typedef
       typename eval_trait<Tile>::type eval_type;  ///< The tile evaluation type
   typedef typename numeric_type<value_type>::type
@@ -770,20 +787,24 @@ class ArrayImpl : public TensorImpl<Policy>,
   /// \tparam Op The type of the functor/function
   /// \param[in] op The operation used to generate tiles
   /// \param[in] skip_set If false, will throw if any tiles are already set
+  /// \return the total number of tiles that have been (or will be) initialized
   /// \throw TiledArray::Exception if the PIMPL is not set. Strong throw
   ///                              guarantee.
   /// \throw TiledArray::Exception if a tile is already set and skip_set is
   ///                              false. Weak throw guarantee.
-  template <HostExecutor Exec = HostExecutor::Default, typename Op>
-  void init_tiles(Op&& op, bool skip_set = false) {
+  template <HostExecutor Exec = HostExecutor::Default, Fence fence = Fence::No,
+            typename Op>
+  std::int64_t init_tiles(Op&& op, bool skip_set = false) {
     // lifetime management of op depends on whether it is a lvalue ref (i.e. has
     // an external owner) or an rvalue ref
     // - if op is an lvalue ref: pass op to tasks
     // - if op is an rvalue ref pass make_shared_function(op) to tasks
     auto op_shared_handle = make_op_shared_handle(std::forward<Op>(op));
 
+    std::int64_t ntiles_initialized{0};
     auto it = this->pmap()->begin();
     const auto end = this->pmap()->end();
+    std::atomic<std::int64_t> ntask_completed{0};
     for (; it != end; ++it) {
       const auto& index = *it;
       if (!this->is_zero(index)) {
@@ -792,19 +813,39 @@ class ArrayImpl : public TensorImpl<Policy>,
           if (fut.probe()) continue;
         }
         if constexpr (Exec == HostExecutor::MADWorld) {
-          Future<value_type> tile = this->world().taskq.add(
-              [this_sptr = this->shared_from_this(),
-               index = ordinal_type(index), op_shared_handle]() -> value_type {
+          Future<value_type> tile =
+              this->world().taskq.add([this_sptr = this->shared_from_this(),
+                                       index = ordinal_type(index),
+                                       op_shared_handle, this]() -> value_type {
                 return op_shared_handle(
                     this_sptr->trange().make_tile_range(index));
               });
+          ++ntiles_initialized;
+          if constexpr (fence == Fence::Local) {
+            tile.register_callback(
+                new IncrementCounter<decltype(ntask_completed)>(
+                    ntask_completed));
+          }
           set(index, std::move(tile));
         } else {
           static_assert(Exec == HostExecutor::Thread);
           set(index, op_shared_handle(this->trange().make_tile_range(index)));
+          ++ntiles_initialized;
         }
       }
     }
+
+    if constexpr (fence == Fence::Local) {
+      if constexpr (Exec == HostExecutor::MADWorld) {
+        if (ntiles_initialized > 0)
+          this->world().await([&ntask_completed, ntiles_initialized]() {
+            return ntask_completed == ntiles_initialized;
+          });
+      }
+    } else if constexpr (fence == Fence::Global) {
+      this->world().gop.fence();
+    }
+    return ntiles_initialized;
   }
 
 };  // class ArrayImpl
@@ -854,8 +895,8 @@ template <typename Tile, typename Policy>
 std::shared_ptr<ArrayImpl<Tile, Policy>> make_with_new_trange(
     const std::shared_ptr<const ArrayImpl<Tile, Policy>>& source_array_sptr,
     const TiledRange& target_trange,
-    typename ArrayImpl<Tile, Policy>::numeric_type new_value_fill =
-        typename ArrayImpl<Tile, Policy>::numeric_type{0}) {
+    typename ArrayImpl<Tile, Policy>::element_type new_value_fill =
+        typename ArrayImpl<Tile, Policy>::element_type{}) {
   TA_ASSERT(source_array_sptr);
   auto& source_array = *source_array_sptr;
   auto& world = source_array.world();

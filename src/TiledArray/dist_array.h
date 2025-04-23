@@ -461,7 +461,7 @@ class DistArray : public madness::archive::ParallelSerializableObject {
   /// This constructor remaps the data of \p other according to \p new_trange ,
   /// with \p new_value_fill used to fill the new elements, if any
   DistArray(const DistArray& other, const trange_type& new_trange,
-            numeric_type new_value_fill = numeric_type{0})
+            element_type new_value_fill = element_type{})
       : pimpl_(
             make_with_new_trange(other.pimpl(), new_trange, new_value_fill)) {
     this->truncate();
@@ -487,7 +487,9 @@ class DistArray : public madness::archive::ParallelSerializableObject {
   /// initialized using the `op` function/functor, which transforms
   /// each tile in `other` using `op`
   /// \param other The array to be copied
-  template <typename OtherTile, typename Op>
+  template <typename OtherTile, typename Op,
+            typename = std::enable_if_t<
+                !std::is_same_v<detail::remove_cvr_t<Op>, TiledRange>>>
   DistArray(const DistArray<OtherTile, Policy>& other, Op&& op) : pimpl_() {
     *this = foreach<Tile>(other, std::forward<Op>(op));
   }
@@ -906,23 +908,29 @@ class DistArray : public madness::archive::ParallelSerializableObject {
   ///                              guarantee.
   /// \throw TiledArray::Exception if skip_set is false and a local tile is
   ///                              already set. Weak throw guarantee.
-  void fill_local(const element_type& value = element_type(),
-                  bool skip_set = false) {
-    init_tiles(
+  template <Fence fence = Fence::No>
+  std::int64_t fill_local(const element_type& value = element_type(),
+                          bool skip_set = false) {
+    return init_tiles<HostExecutor::Default, fence>(
         [value](const range_type& range) { return value_type(range, value); },
         skip_set);
   }
 
   /// Fill all local tiles with the specified value
 
+  /// \tparam fence If Fence::No, the operation will return early,
+  ///         before the tasks have completed
   /// \param[in] value What each local tile should be filled with.
   /// \param[in] skip_set If false, will throw if any tiles are already set
+  /// \return the total number of tiles that have been (or will be) initialized
   /// \throw TiledArray::Exception if the PIMPL is uninitialized. Strong throw
   ///                              guarantee.
   /// \throw TiledArray::Exception if skip_set is false and a local tile is
   ///                              already set. Weak throw guarantee.
-  void fill(const element_type& value = numeric_type(), bool skip_set = false) {
-    fill_local(value, skip_set);
+  template <Fence fence = Fence::No>
+  std::int64_t fill(const element_type& value = numeric_type(),
+                    bool skip_set = false) {
+    return fill_local<fence>(value, skip_set);
   }
 
   /// Fill all local tiles with random values
@@ -934,18 +942,21 @@ class DistArray : public madness::archive::ParallelSerializableObject {
   /// generate random values of type T this function will be disabled via SFINAE
   /// and attempting to use it will lead to a compile-time error.
   ///
+  /// \tparam fence If Fence::No, the operation will return early,
+  ///         before the tasks have completed
   /// \tparam T The type of random value to generate. Defaults to
   ///           element_type.
   /// \param[in] skip_set If false, will throw if any tiles are already set
+  /// \return the total number of tiles that have been (or will be) initialized
   /// \throw TiledArray::Exception if the PIMPL is not initialized. Strong
   ///                              throw guarantee.
   /// \throw TiledArray::Exception if skip_set is false and a local tile is
   ///                              already initialized. Weak throw guarantee.
   template <HostExecutor Exec = HostExecutor::Default,
-            typename T = element_type,
+            typename T = element_type, Fence fence = Fence::No,
             typename = detail::enable_if_can_make_random_t<T>>
-  void fill_random(bool skip_set = false) {
-    init_elements<Exec>(
+  std::int64_t fill_random(bool skip_set = false) {
+    return init_elements<Exec, fence>(
         [](const auto&) { return detail::MakeRandom<T>::generate_value(); });
   }
 
@@ -978,6 +989,8 @@ class DistArray : public madness::archive::ParallelSerializableObject {
   ///        return tile;
   ///     });
   /// \endcode
+  /// \tparam fence If Fence::No, the operation will return early,
+  ///         before the tasks have completed
   /// \tparam Op The type of the functor/function
   /// \param[in] op The operation used to generate tiles
   /// \param[in] skip_set If false, will throw if any tiles are already set
@@ -985,9 +998,11 @@ class DistArray : public madness::archive::ParallelSerializableObject {
   ///                              guarantee.
   /// \throw TiledArray::Exception if a tile is already set and skip_set is
   ///                              false. Weak throw guarantee.
-  template <HostExecutor Exec = HostExecutor::Default, typename Op>
-  void init_tiles(Op&& op, bool skip_set = false) {
-    impl_ref().template init_tiles<Exec>(std::forward<Op>(op), skip_set);
+  template <HostExecutor Exec = HostExecutor::Default, Fence fence = Fence::No,
+            typename Op>
+  std::int64_t init_tiles(Op&& op, bool skip_set = false) {
+    return impl_ref().template init_tiles<Exec, fence>(std::forward<Op>(op),
+                                                       skip_set);
   }
 
   /// Initialize elements of local, non-zero tiles with a user provided functor
@@ -1009,15 +1024,17 @@ class DistArray : public madness::archive::ParallelSerializableObject {
   /// \tparam Op Type of the function/functor which will generate the elements.
   /// \param[in] op The operation used to generate elements
   /// \param[in] skip_set If false, will throw if any tiles are already set
+  /// \return the total number of tiles that have been (or will be) initialized
   /// \throw TiledArray::Exception if the PIMPL is not initialized. Strong
   ///                              throw guarnatee.
   /// \throw TiledArray::Exception if skip_set is false and a local, non-zero
   ///                              tile is already initialized. Weak throw
   ///                              guarantee.
-  template <HostExecutor Exec = HostExecutor::Default, typename Op>
-  void init_elements(Op&& op, bool skip_set = false) {
+  template <HostExecutor Exec = HostExecutor::Default, Fence fence = Fence::No,
+            typename Op>
+  std::int64_t init_elements(Op&& op, bool skip_set = false) {
     auto op_shared_handle = make_op_shared_handle(std::forward<Op>(op));
-    init_tiles<Exec>(
+    return init_tiles<Exec, fence>(
         [op = std::move(op_shared_handle)](
             const TiledArray::Range& range) -> value_type {
           // Initialize the tile with the given range object
@@ -1726,6 +1743,20 @@ class DistArray : public madness::archive::ParallelSerializableObject {
 
 };  // class DistArray
 
+/// \return the approximate number of bytes used by \p t in this rank's
+/// memory space `S`
+/// \note this does not account for the TiledRange and some other metadata
+template <MemorySpace S, typename Tile, typename Policy>
+std::size_t size_of(const DistArray<Tile, Policy>& da) {
+  std::size_t result = 0;
+  result += size_of<S>(da.shape());
+  // add up local tile's contributions
+  for (const auto& tile_ref : da) {
+    result += size_of<S>(tile_ref.get());
+  }
+  return result;
+}
+
 #ifndef TILEDARRAY_HEADER_ONLY
 
 extern template class DistArray<Tensor<double>, DensePolicy>;
@@ -1759,9 +1790,10 @@ extern template class DistArray<Tensor<std::complex<float>>, SparsePolicy>;
 /// \param a The array to be put in the output stream
 /// \return A reference to the output stream
 /// \note this is a collective operation
-template <typename Tile, typename Policy>
-inline std::ostream& operator<<(std::ostream& os,
-                                const DistArray<Tile, Policy>& a) {
+template <typename Char, typename CharTraits, typename Tile, typename Policy>
+inline std::basic_ostream<Char, CharTraits>& operator<<(
+    std::basic_ostream<Char, CharTraits>& os,
+    const DistArray<Tile, Policy>& a) {
   if (a.world().rank() == 0) {
     for (std::size_t i = 0; i < a.size(); ++i)
       if (!a.is_zero(i)) {
@@ -1777,6 +1809,22 @@ inline std::ostream& operator<<(std::ostream& os,
 template <typename Tile, typename Policy>
 auto rank(const DistArray<Tile, Policy>& a) {
   return a.trange().tiles_range().rank();
+}
+
+/// Checks if for every tile `i` its range matches the tile range produced by
+/// `a.trange()`
+
+/// @return `a.get(i)->range() == a.trange().make_tile_range(i)` for every tile
+/// `i`
+template <typename Tile, typename Policy>
+bool tile_ranges_match_trange(const DistArray<Tile, Policy>& a) {
+  auto end = a.end();
+  for (auto it = a.begin(); it != end; ++it) {
+    if (it->is_local() && !a.is_zero(it.index()))
+      if ((*it).get().range() != a.trange().make_tile_range(it.index()))
+        return false;
+  }
+  return true;
 }
 
 ///
@@ -1845,39 +1893,6 @@ auto squared_norm(const DistArray<Tile, Policy>& a) {
 template <typename Tile, typename Policy>
 auto norm2(const DistArray<Tile, Policy>& a) {
   return std::sqrt(squared_norm(a));
-}
-
-template <typename Array, typename Tiles>
-Array make_array(World& world, const detail::trange_t<Array>& tiled_range,
-                 Tiles begin, Tiles end, bool replicated) {
-  Array array;
-  using Tuple = std::remove_reference_t<decltype(*begin)>;
-  using Index = std::tuple_element_t<0, Tuple>;
-  using shape_type = typename Array::shape_type;
-
-  std::shared_ptr<typename Array::pmap_interface> pmap;
-  if (replicated) {
-    size_t ntiles = tiled_range.tiles_range().volume();
-    pmap = std::make_shared<detail::ReplicatedPmap>(world, ntiles);
-  }
-
-  if constexpr (shape_type::is_dense()) {
-    array = Array(world, tiled_range, pmap);
-  } else {
-    std::vector<std::pair<Index, float>> tile_norms;
-    for (Tiles it = begin; it != end; ++it) {
-      auto [index, tile] = *it;
-      tile_norms.push_back({index, tile.norm()});
-    }
-    shape_type shape(world, tile_norms, tiled_range);
-    array = Array(world, tiled_range, shape, pmap);
-  }
-  for (Tiles it = begin; it != end; ++it) {
-    auto [index, tile] = *it;
-    if (array.is_zero(index)) continue;
-    array.set(index, tile);
-  }
-  return array;
 }
 
 template <typename T, typename P>

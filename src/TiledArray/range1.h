@@ -26,13 +26,15 @@
 #include <boost/iterator/iterator_facade.hpp>
 
 #include <TiledArray/error.h>
+#include <TiledArray/platform.h>
 
 namespace TiledArray {
 
 /// an integer range `[first,second)`
 /// @note previously represented by std::pair, hence the design
 struct Range1 {
-  typedef TA_1INDEX_TYPE index1_type;
+  using index1_type = TA_1INDEX_TYPE;
+  using signed_index1_type = std::make_signed_t<index1_type>;
   index1_type first = 0;
   index1_type second = 0;  //< N.B. second >= first
 
@@ -137,7 +139,7 @@ struct Range1 {
     /// \brief dereferences this iterator
     /// \return const reference to the current index
     const auto& dereference() const { return v; }
-  };
+  };  // class Iterator
   friend class Iterator;
 
   typedef Iterator const_iterator;  ///< Iterator type
@@ -162,7 +164,30 @@ struct Range1 {
   /// \return An iterator that points to the beginning of the local element set
   const_iterator cend() const { return end(); }
 
-  /// @}
+  /// shifts this Range1
+
+  /// @param[in] shift the shift to apply
+  /// @return reference to this
+  Range1& inplace_shift(signed_index1_type shift) {
+    if (shift == 0) return *this;
+    // ensure that it's safe to shift
+    TA_ASSERT(shift <= 0 || upbound() <= 0 ||
+              (shift <= (std::numeric_limits<index1_type>::max() - upbound())));
+    TA_ASSERT(shift >= 0 || lobound() >= 0 ||
+              (std::abs(shift) <=
+               (lobound() - std::numeric_limits<index1_type>::min())));
+    first += shift;
+    second += shift;
+    return *this;
+  }
+
+  /// creates a shifted Range1
+
+  /// @param[in] shift the shift value
+  /// @return a copy of this shifted by @p shift
+  [[nodiscard]] Range1 shift(signed_index1_type shift) const {
+    return Range1(*this).inplace_shift(shift);
+  }
 
   template <typename Archive,
             typename std::enable_if<madness::is_input_archive_v<
@@ -177,6 +202,15 @@ struct Range1 {
   void serialize(Archive& ar) const {
     ar & first & second;
   }
+
+  template <MemorySpace S>
+  friend constexpr std::size_t size_of(const Range1& r) {
+    std::size_t sz = 0;
+    if constexpr (S == MemorySpace::Host) {
+      sz += sizeof(r);
+    }
+    return sz;
+  }
 };
 
 inline bool operator==(const Range1& x, const Range1& y) {
@@ -188,6 +222,14 @@ inline bool operator!=(const Range1& x, const Range1& y) { return !(x == y); }
 /// Exchange the data of the two given ranges.
 inline void swap(Range1& r0, Range1& r1) {  // no throw
   r0.swap(r1);
+}
+
+/// Range1 ostream operator
+template <typename Char, typename CharTraits>
+inline std::basic_ostream<Char, CharTraits>& operator<<(
+    std::basic_ostream<Char, CharTraits>& out, const Range1& rng) {
+  out << "[ " << rng.first << ", " << rng.second << " )";
+  return out;
 }
 
 /// Test that two Range1 objects are congruent
